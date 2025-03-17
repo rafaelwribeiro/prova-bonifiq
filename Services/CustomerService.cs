@@ -1,21 +1,18 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using ProvaPub.Models;
 using ProvaPub.Repository;
+using ProvaPub.Repository.Interface;
 
 namespace ProvaPub.Services
 {
-    public class CustomerService
+    public class CustomerService : BaseService<Customer>
     {
-        TestDbContext _ctx;
+        private readonly IUnitOfWork _uow;
 
-        public CustomerService(TestDbContext ctx)
-        {
-            _ctx = ctx;
-        }
 
-        public CustomerList ListCustomers(int page)
+        public CustomerService(IUnitOfWork uow) : base(uow)
         {
-            return new CustomerList() { HasNext = false, TotalCount = 10, Customers = _ctx.Customers.ToList() };
+            _uow = uow;
         }
 
         public async Task<bool> CanPurchase(int customerId, decimal purchaseValue)
@@ -24,18 +21,21 @@ namespace ProvaPub.Services
 
             if (purchaseValue <= 0) throw new ArgumentOutOfRangeException(nameof(purchaseValue));
 
+            var customerRepo = _uow.GetRepository<Customer>();
+            var orderRepo = _uow.GetRepository<Order>();
+
             //Business Rule: Non registered Customers cannot purchase
-            var customer = await _ctx.Customers.FindAsync(customerId);
+            var customer = await customerRepo.GetByFilter(c => c.Id == customerId);
             if (customer == null) throw new InvalidOperationException($"Customer Id {customerId} does not exists");
 
             //Business Rule: A customer can purchase only a single time per month
             var baseDate = DateTime.UtcNow.AddMonths(-1);
-            var ordersInThisMonth = await _ctx.Orders.CountAsync(s => s.CustomerId == customerId && s.OrderDate >= baseDate);
+            var ordersInThisMonth = await orderRepo.CountAsync(s => s.CustomerId == customerId && s.OrderDate >= baseDate);
             if (ordersInThisMonth > 0)
                 return false;
 
             //Business Rule: A customer that never bought before can make a first purchase of maximum 100,00
-            var haveBoughtBefore = await _ctx.Customers.CountAsync(s => s.Id == customerId && s.Orders.Any());
+            var haveBoughtBefore = await customerRepo.CountAsync(s => s.Id == customerId && s.Orders.Any());
             if (haveBoughtBefore == 0 && purchaseValue > 100)
                 return false;
 
